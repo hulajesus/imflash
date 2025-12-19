@@ -26,7 +26,7 @@ export const InfoFeed = () => {
   // 获取钱包信号（最新的 3 条）- 直接从数据库读取避免 CORS
   const { data: walletSignalsResponse, isLoading: isLoadingSignals } = useQuery({
     queryKey: ['walletSignals', address],
-    queryFn: () => getWalletSignals(address!, 100),
+    queryFn: () => getWalletSignals(address!, 30),
     enabled: !!address,
     refetchInterval: 60000, // 每分钟刷新一次
   });
