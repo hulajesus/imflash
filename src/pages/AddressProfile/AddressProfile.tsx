@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowLeft, Loader2, Tag as TagIcon, Eye, Settings } from 'lucide-react';
+import { ArrowLeft, Loader2, Tag as TagIcon, Settings } from 'lucide-react';
 import { useAccount, useDisconnect } from 'wagmi';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { getAddressProfile, getOnChainData } from '../../services/api';

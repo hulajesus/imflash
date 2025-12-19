@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { TrendingUp, Target, Zap, Eye, Search, Shield, Lock, X } from 'lucide-react';
+import { Eye, Search } from 'lucide-react';
 import { ConnectButton } from '@rainbow-me/rainbowkit';
 import { useAccount } from 'wagmi';
 import { isAddress } from 'viem';
