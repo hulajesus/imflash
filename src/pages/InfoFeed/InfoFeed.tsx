@@ -1,9 +1,9 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowLeft, Clock, X, ExternalLink, Loader2, HeartCrack, TrendingUp, AlertTriangle, TrendingDown } from 'lucide-react';
+import { ArrowLeft, Clock, X, ExternalLink, Loader2, HeartCrack, TrendingUp, TrendingDown } from 'lucide-react';
 import { useAccount } from 'wagmi';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { getInfoFeed, getHistoryFeed, submitFeedAction, getWalletSignals, WalletSignal } from '../../services/api';
+import { getInfoFeed, getHistoryFeed, submitFeedAction, getWalletSignals, type WalletSignal } from '../../services/api';
 import { InfoFeedItem } from '../../types/api';
 import { useSupabaseNotifications } from '../../hooks/useSupabaseNotifications';
 import { formatDistanceToNow } from 'date-fns';
@@ -23,13 +23,15 @@ export const InfoFeed = () => {
   const address = connectedAddress || watchAddress;
   const isWatchMode = !isConnected && !!watchAddress;
 
-  // 获取钱包信号（最新的 3 条）
-  const { data: walletSignalsData, isLoading: isLoadingSignals } = useQuery({
+  // 获取钱包信号（最新的 3 条）- 直接从数据库读取避免 CORS
+  const { data: walletSignalsResponse, isLoading: isLoadingSignals } = useQuery({
     queryKey: ['walletSignals', address],
-    queryFn: () => getWalletSignals(address!, 3, 0.3),
+    queryFn: () => getWalletSignals(address!, 100),
     enabled: !!address,
     refetchInterval: 60000, // 每分钟刷新一次
   });
+
+  const walletSignals = walletSignalsResponse?.signals || [];
 
   // 获取信息流
   const { data: feedItems = [], isLoading } = useQuery<InfoFeedItem[]>({
@@ -55,8 +57,9 @@ export const InfoFeed = () => {
     showBrowserNotification: true,
     onNotification: (notification) => {
       console.log('信息流页面收到新通知:', notification);
-      // 刷新钱包信号数据
+      // 刷新钱包信号数据和信息流
       queryClient.invalidateQueries({ queryKey: ['walletSignals', address] });
+      queryClient.invalidateQueries({ queryKey: ['infoFeed', address] });
     },
   });
 
@@ -159,9 +162,9 @@ export const InfoFeed = () => {
             <p className="text-sm text-gray-600">加载信号中...</p>
           </div>
         </div>
-      ) : walletSignalsData?.signals && walletSignalsData.signals.length > 0 ? (
+      ) : walletSignals && walletSignals.length > 0 ? (
         <div className="px-4 pt-4 space-y-3">
-          {walletSignalsData.signals.map((signal) => (
+          {walletSignals.map((signal) => (
             <SignalCard key={signal.id} signal={signal} formatTime={formatTime} />
           ))}
         </div>
@@ -207,6 +210,8 @@ interface SignalCardProps {
 }
 
 const SignalCard = ({ signal, formatTime }: SignalCardProps) => {
+  const [isDisliked, setIsDisliked] = useState(false);
+
   const getDirectionColor = (direction: string) => {
     switch (direction) {
       case 'bullish':
@@ -238,6 +243,12 @@ const SignalCard = ({ signal, formatTime }: SignalCardProps) => {
     return colors[strength as keyof typeof colors] || colors.weak;
   };
 
+  const handleDislike = () => {
+    setIsDisliked(true);
+    // TODO: 调用 API 标记为不感兴趣
+    console.log('标记信号为不感兴趣:', signal.id);
+  };
+
   return (
     <div className="bg-gradient-to-br from-white to-gray-50 rounded-xl shadow-md border border-gray-200 p-4 hover:shadow-lg transition-shadow">
       {/* 头部：事件类型和时间 */}
@@ -255,84 +266,64 @@ const SignalCard = ({ signal, formatTime }: SignalCardProps) => {
 
       {/* 摘要 */}
       <h3 className="text-base font-semibold text-gray-900 mb-2 leading-snug">
-        {signal.summary_cn}
+        {signal.summary_cn || '暂无摘要'}
       </h3>
 
-      {/* 资产信息 */}
-      <div className="flex items-center gap-2 mb-3 flex-wrap">
-        <span className="text-xs text-gray-600">资产:</span>
-        {signal.asset_names.split('、').map((asset, idx) => (
-          <span key={idx} className="text-xs px-2 py-1 bg-blue-50 text-blue-700 rounded-full">
-            {asset}
-          </span>
-        ))}
-      </div>
+      {/* 资产信息 - 只在有资产名称时显示 */}
+      {signal.asset_names && signal.asset_names.trim() && (
+        <div className="flex items-center gap-2 mb-3 flex-wrap">
+          <span className="text-xs text-gray-600">资产:</span>
+          {signal.asset_names.split('、').map((asset, idx) => (
+            <span key={idx} className="text-xs px-2 py-1 bg-blue-50 text-blue-700 rounded-full">
+              {asset.trim()}
+            </span>
+          ))}
+        </div>
+      )}
 
-      {/* 操作建议和方向 */}
-      <div className="flex items-center gap-3 mb-3">
-        <div className="flex items-center gap-1.5">
-          {getActionIcon(signal.action)}
-          <span className="text-sm font-medium text-gray-700 capitalize">{signal.action}</span>
-        </div>
-        <div className={`flex items-center gap-1.5 px-2 py-1 rounded-lg ${getDirectionColor(signal.direction)}`}>
-          <span className="text-sm font-medium capitalize">{signal.direction}</span>
-        </div>
-        <div className="flex items-center gap-1.5 text-sm text-gray-600">
-          <span>置信度:</span>
-          <span className="font-semibold">{(signal.confidence * 100).toFixed(0)}%</span>
-        </div>
-      </div>
-
-      {/* 风险标记 */}
-      {signal.risk_flags && signal.risk_flags.length > 0 && (
-        <div className="flex items-start gap-2 mb-3 p-2 bg-amber-50 rounded-lg border border-amber-200">
-          <AlertTriangle className="w-4 h-4 text-amber-600 flex-shrink-0 mt-0.5" />
-          <div className="flex-1">
-            <p className="text-xs text-amber-800 font-medium mb-1">风险提示:</p>
-            <div className="flex flex-wrap gap-1">
-              {signal.risk_flags.map((flag, idx) => (
-                <span key={idx} className="text-xs px-2 py-0.5 bg-amber-100 text-amber-700 rounded">
-                  {flag}
-                </span>
-              ))}
-            </div>
+      {/* 操作建议和方向 - 只显示非 observe 的操作 */}
+      {signal.action !== 'observe' && (
+        <div className="flex items-center gap-3 mb-3">
+          <div className="flex items-center gap-1.5">
+            {getActionIcon(signal.action)}
+            <span className="text-sm font-medium text-gray-700 capitalize">{signal.action}</span>
+          </div>
+          <div className={`flex items-center gap-1.5 px-2 py-1 rounded-lg ${getDirectionColor(signal.direction)}`}>
+            <span className="text-sm font-medium capitalize">{signal.direction}</span>
           </div>
         </div>
       )}
 
       {/* 备注 */}
-      {signal.notes && (
+      {signal.notes && signal.notes.trim() && (
         <p className="text-sm text-gray-700 leading-relaxed mb-3 p-3 bg-gray-50 rounded-lg border border-gray-200">
           {signal.notes}
         </p>
       )}
 
-      {/* 评分信息 */}
-      {signal.scoring && (
-        <div className="pt-3 border-t border-gray-200">
-          <div className="flex items-center justify-between text-xs">
-            <div className="flex items-center gap-4">
-              <span className="text-gray-600">
-                最终得分: <span className="font-semibold text-gray-900">{signal.scoring.final_score.toFixed(2)}</span>
-              </span>
-              {signal.scoring.matched_tags && signal.scoring.matched_tags.length > 0 && (
-                <span className="text-gray-600">
-                  匹配标签: <span className="font-semibold text-primary-600">{signal.scoring.matched_tags.length}</span>
-                </span>
-              )}
-            </div>
-            <a
-              href="https://tokenlon.im/instant"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="flex items-center gap-1.5 px-3 py-1.5 text-sm text-white bg-primary-600 hover:bg-primary-700 rounded-lg transition-colors"
-            >
-              <TrendingUp className="w-4 h-4" />
-              交易
-            </a>
-          </div>
-        </div>
-      )}
+      {/* 操作按钮 */}
+      <div className="flex items-center justify-between pt-3 border-t border-gray-200">
+        <button
+          onClick={handleDislike}
+          className={`flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-lg transition-colors ${
+            isDisliked
+              ? 'bg-gray-200 text-gray-700'
+              : 'text-gray-600 hover:bg-gray-50'
+          }`}
+        >
+          <HeartCrack className="w-4 h-4" />
+          不感兴趣
+        </button>
+        <a
+          href="https://tokenlon.im/instant"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="flex items-center gap-1.5 px-3 py-1.5 text-sm text-primary-600 hover:bg-primary-50 rounded-lg transition-colors"
+        >
+          <TrendingUp className="w-4 h-4" />
+          交易
+        </a>
+      </div>
     </div>
   );
 };
