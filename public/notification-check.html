@@ -1,0 +1,453 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Android 通知诊断工具</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      padding: 20px;
+      background: #f5f5f5;
+      line-height: 1.6;
+    }
+    .container { max-width: 600px; margin: 0 auto; }
+    .card {
+      background: white;
+      border-radius: 12px;
+      padding: 20px;
+      margin-bottom: 20px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+    }
+    h1 { color: #333; margin-bottom: 10px; font-size: 24px; }
+    h2 { color: #555; margin-bottom: 15px; font-size: 18px; }
+    .status {
+      padding: 12px;
+      border-radius: 8px;
+      margin-bottom: 10px;
+      font-size: 14px;
+    }
+    .success { background: #d4edda; color: #155724; border: 1px solid #c3e6cb; }
+    .error { background: #f8d7da; color: #721c24; border: 1px solid #f5c6cb; }
+    .warning { background: #fff3cd; color: #856404; border: 1px solid #ffeaa7; }
+    .info { background: #d1ecf1; color: #0c5460; border: 1px solid #bee5eb; }
+    button {
+      background: #007AFF;
+      color: white;
+      border: none;
+      padding: 14px 24px;
+      border-radius: 8px;
+      font-size: 16px;
+      cursor: pointer;
+      width: 100%;
+      margin-bottom: 10px;
+      font-weight: 500;
+    }
+    button:active { opacity: 0.8; }
+    button.secondary {
+      background: #6c757d;
+    }
+    button.danger {
+      background: #dc3545;
+    }
+    .log {
+      background: #f8f9fa;
+      border: 1px solid #dee2e6;
+      border-radius: 8px;
+      padding: 15px;
+      max-height: 300px;
+      overflow-y: auto;
+      font-family: 'Courier New', monospace;
+      font-size: 12px;
+      white-space: pre-wrap;
+      word-wrap: break-word;
+    }
+    .step {
+      padding: 10px;
+      margin-bottom: 10px;
+      border-left: 3px solid #007AFF;
+      background: #f8f9fa;
+      border-radius: 4px;
+    }
+    .step-number {
+      display: inline-block;
+      width: 24px;
+      height: 24px;
+      background: #007AFF;
+      color: white;
+      border-radius: 50%;
+      text-align: center;
+      line-height: 24px;
+      margin-right: 8px;
+      font-weight: bold;
+      font-size: 14px;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="card">
+      <h1>🔔 Android 通知诊断工具</h1>
+      <p style="color: #666; margin-bottom: 20px;">
+        快速检查 Android 设备上的通知功能是否正常
+      </p>
+    </div>
+
+    <div class="card">
+      <h2>📊 系统状态</h2>
+      <div id="status"></div>
+    </div>
+
+    <div class="card">
+      <h2>🧪 快速测试</h2>
+      <button onclick="runFullTest()">🚀 运行完整测试</button>
+      <button onclick="requestPermission()" class="secondary">1️⃣ 请求通知权限</button>
+      <button onclick="sendTestNotification()" class="secondary">2️⃣ 发送测试通知</button>
+      <button onclick="sendMultiple()" class="secondary">3️⃣ 发送 3 条通知</button>
+      <button onclick="checkSettings()" class="secondary">4️⃣ 检查设置</button>
+      <button onclick="clearLog()" class="danger">清空日志</button>
+    </div>
+
+    <div class="card">
+      <h2>📝 诊断日志</h2>
+      <div id="log" class="log">等待测试...</div>
+    </div>
+
+    <div class="card">
+      <h2>💡 使用说明</h2>
+      <div class="step">
+        <span class="step-number">1</span>
+        点击"运行完整测试"进行自动诊断
+      </div>
+      <div class="step">
+        <span class="step-number">2</span>
+        如果权限是 denied，点击"请求通知权限"
+      </div>
+      <div class="step">
+        <span class="step-number">3</span>
+        权限授予后，点击"发送测试通知"
+      </div>
+      <div class="step">
+        <span class="step-number">4</span>
+        如果还是没有通知，查看下方的诊断建议
+      </div>
+    </div>
+
+    <div class="card" id="suggestions" style="display: none;">
+      <h2>🔧 诊断建议</h2>
+      <div id="suggestionContent"></div>
+    </div>
+  </div>
+
+  <script>
+    let testResults = {
+      hasNotificationAPI: false,
+      permission: 'unknown',
+      canSendNotification: false,
+      isAndroid: false,
+      isChrome: false,
+      errors: []
+    };
+
+    function log(message, type = 'info') {
+      const logDiv = document.getElementById('log');
+      const timestamp = new Date().toLocaleTimeString();
+      const icon = type === 'error' ? '❌' : type === 'success' ? '✅' : type === 'warning' ? '⚠️' : 'ℹ️';
+      logDiv.textContent += `[${timestamp}] ${icon} ${message}\n`;
+      logDiv.scrollTop = logDiv.scrollHeight;
+      console.log(`[${type}]`, message);
+    }
+
+    function clearLog() {
+      document.getElementById('log').textContent = '日志已清空\n';
+      log('日志已清空');
+    }
+
+    function updateStatus() {
+      const statusDiv = document.getElementById('status');
+      const ua = navigator.userAgent;
+      const isAndroid = /Android/i.test(ua);
+      const isChrome = /Chrome/i.test(ua) && !/Edge/i.test(ua);
+      const hasAPI = 'Notification' in window;
+      const permission = hasAPI ? Notification.permission : 'N/A';
+
+      testResults.isAndroid = isAndroid;
+      testResults.isChrome = isChrome;
+      testResults.hasNotificationAPI = hasAPI;
+      testResults.permission = permission;
+
+      let html = '';
+      
+      html += `<div class="status ${isAndroid ? 'success' : 'warning'}">
+        <strong>平台:</strong> ${isAndroid ? '✅ Android' : '⚠️ 非 Android'}
+      </div>`;
+      
+      html += `<div class="status ${isChrome ? 'success' : 'warning'}">
+        <strong>浏览器:</strong> ${isChrome ? '✅ Chrome' : '⚠️ 非 Chrome'}
+      </div>`;
+      
+      html += `<div class="status ${hasAPI ? 'success' : 'error'}">
+        <strong>Notification API:</strong> ${hasAPI ? '✅ 支持' : '❌ 不支持'}
+      </div>`;
+      
+      html += `<div class="status ${permission === 'granted' ? 'success' : permission === 'denied' ? 'error' : 'warning'}">
+        <strong>通知权限:</strong> ${permission === 'granted' ? '✅ 已授权' : permission === 'denied' ? '❌ 已拒绝' : '⚠️ 未请求'}
+      </div>`;
+
+      statusDiv.innerHTML = html;
+    }
+
+    async function requestPermission() {
+      log('开始请求通知权限...');
+      
+      if (!('Notification' in window)) {
+        log('浏览器不支持 Notification API', 'error');
+        testResults.errors.push('浏览器不支持通知');
+        showSuggestions();
+        return;
+      }
+
+      try {
+        const permission = await Notification.requestPermission();
+        log(`权限请求结果: ${permission}`);
+        testResults.permission = permission;
+        
+        if (permission === 'granted') {
+          log('✅ 权限已授予！可以发送通知了', 'success');
+        } else if (permission === 'denied') {
+          log('❌ 权限被拒绝', 'error');
+          testResults.errors.push('权限被拒绝');
+          showSuggestions();
+        } else {
+          log('⚠️ 权限请求被忽略', 'warning');
+        }
+      } catch (error) {
+        log(`权限请求失败: ${error.message}`, 'error');
+        testResults.errors.push(`权限请求失败: ${error.message}`);
+        showSuggestions();
+      }
+      
+      updateStatus();
+    }
+
+    function sendTestNotification() {
+      log('准备发送测试通知...');
+      
+      if (!('Notification' in window)) {
+        log('浏览器不支持通知', 'error');
+        return;
+      }
+
+      if (Notification.permission !== 'granted') {
+        log('没有通知权限，请先请求权限', 'error');
+        return;
+      }
+
+      try {
+        log('创建通知对象...');
+        const notification = new Notification('🎉 测试成功！', {
+          body: '如果你看到这条通知，说明功能正常！',
+          icon: '/icon-192.png',
+          badge: '/icon-192.png',
+          tag: 'test',
+          requireInteraction: false
+        });
+
+        notification.onshow = () => {
+          log('✅ 通知已显示！', 'success');
+          testResults.canSendNotification = true;
+        };
+
+        notification.onclick = () => {
+          log('通知被点击');
+          window.focus();
+          notification.close();
+        };
+
+        notification.onerror = (error) => {
+          log(`通知显示错误: ${error}`, 'error');
+          testResults.errors.push(`通知显示错误: ${error}`);
+          showSuggestions();
+        };
+
+        log('通知对象已创建，等待显示...', 'success');
+      } catch (error) {
+        log(`发送通知失败: ${error.message}`, 'error');
+        testResults.errors.push(`发送失败: ${error.message}`);
+        showSuggestions();
+      }
+    }
+
+    function sendMultiple() {
+      log('开始发送 3 条通知...');
+      
+      if (Notification.permission !== 'granted') {
+        log('没有通知权限', 'error');
+        return;
+      }
+
+      for (let i = 0; i < 3; i++) {
+        setTimeout(() => {
+          try {
+            new Notification(`测试通知 ${i + 1}`, {
+              body: `这是第 ${i + 1} 条测试通知`,
+              icon: '/icon-192.png',
+              tag: `test-${i}`
+            });
+            log(`✅ 已发送第 ${i + 1} 条通知`, 'success');
+          } catch (error) {
+            log(`❌ 第 ${i + 1} 条通知发送失败: ${error.message}`, 'error');
+          }
+        }, i * 2000);
+      }
+    }
+
+    function checkSettings() {
+      log('=== 系统设置检查 ===');
+      log(`User Agent: ${navigator.userAgent}`);
+      log(`Platform: ${navigator.platform}`);
+      log(`Language: ${navigator.language}`);
+      log(`Online: ${navigator.onLine}`);
+      log(`Notification API: ${'Notification' in window ? '支持' : '不支持'}`);
+      
+      if ('Notification' in window) {
+        log(`Permission: ${Notification.permission}`);
+        log(`Max Actions: ${Notification.maxActions || 'N/A'}`);
+      }
+
+      if ('serviceWorker' in navigator) {
+        navigator.serviceWorker.getRegistration().then(reg => {
+          log(`Service Worker: ${reg ? '已注册' : '未注册'}`);
+        });
+      } else {
+        log('Service Worker: 不支持');
+      }
+
+      log('=== 检查完成 ===');
+    }
+
+    async function runFullTest() {
+      log('=== 开始完整测试 ===');
+      clearLog();
+      testResults.errors = [];
+      
+      // 1. 检查环境
+      log('步骤 1/4: 检查环境...');
+      updateStatus();
+      await new Promise(resolve => setTimeout(resolve, 500));
+      
+      // 2. 检查权限
+      log('步骤 2/4: 检查权限...');
+      if (Notification.permission === 'default') {
+        log('权限未请求，正在请求...', 'warning');
+        await requestPermission();
+      } else if (Notification.permission === 'denied') {
+        log('权限已被拒绝', 'error');
+        testResults.errors.push('权限被拒绝');
+      } else {
+        log('权限已授予', 'success');
+      }
+      await new Promise(resolve => setTimeout(resolve, 500));
+      
+      // 3. 发送测试通知
+      log('步骤 3/4: 发送测试通知...');
+      if (Notification.permission === 'granted') {
+        sendTestNotification();
+      } else {
+        log('跳过（没有权限）', 'warning');
+      }
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      
+      // 4. 生成报告
+      log('步骤 4/4: 生成诊断报告...');
+      generateReport();
+      
+      log('=== 测试完成 ===');
+    }
+
+    function generateReport() {
+      log('\n=== 诊断报告 ===');
+      log(`Android: ${testResults.isAndroid ? '✅' : '❌'}`);
+      log(`Chrome: ${testResults.isChrome ? '✅' : '❌'}`);
+      log(`Notification API: ${testResults.hasNotificationAPI ? '✅' : '❌'}`);
+      log(`Permission: ${testResults.permission}`);
+      log(`Can Send: ${testResults.canSendNotification ? '✅' : '❌'}`);
+      
+      if (testResults.errors.length > 0) {
+        log('\n发现问题:');
+        testResults.errors.forEach((error, index) => {
+          log(`${index + 1}. ${error}`, 'error');
+        });
+        showSuggestions();
+      } else if (testResults.canSendNotification) {
+        log('\n✅ 所有测试通过！通知功能正常', 'success');
+      }
+      
+      log('=== 报告结束 ===\n');
+    }
+
+    function showSuggestions() {
+      const suggestionsDiv = document.getElementById('suggestions');
+      const contentDiv = document.getElementById('suggestionContent');
+      
+      let html = '';
+      
+      if (!testResults.isAndroid) {
+        html += `<div class="status warning">
+          <strong>⚠️ 非 Android 设备</strong><br>
+          此工具专为 Android 设计。如果你在其他平台，请使用对应的测试工具。
+        </div>`;
+      }
+      
+      if (!testResults.isChrome) {
+        html += `<div class="status warning">
+          <strong>⚠️ 非 Chrome 浏览器</strong><br>
+          建议使用 Chrome 浏览器以获得最佳支持。
+        </div>`;
+      }
+      
+      if (!testResults.hasNotificationAPI) {
+        html += `<div class="status error">
+          <strong>❌ 不支持 Notification API</strong><br>
+          你的浏览器不支持通知功能。请更新浏览器或使用 Chrome。
+        </div>`;
+      }
+      
+      if (testResults.permission === 'denied') {
+        html += `<div class="status error">
+          <strong>❌ 通知权限被拒绝</strong><br>
+          解决方法：<br>
+          1. 点击地址栏左侧的 🔒 图标<br>
+          2. 找到"通知"权限<br>
+          3. 改为"允许"<br>
+          4. 刷新页面重新测试
+        </div>`;
+      }
+      
+      if (testResults.permission === 'granted' && !testResults.canSendNotification) {
+        html += `<div class="status error">
+          <strong>❌ 有权限但无法发送通知</strong><br>
+          可能的原因：<br>
+          1. 系统通知被禁用（设置 → 通知）<br>
+          2. Chrome 通知被禁用（设置 → 应用 → Chrome → 通知）<br>
+          3. 勿扰模式已开启<br>
+          4. 电池优化限制了通知
+        </div>`;
+      }
+      
+      if (html) {
+        contentDiv.innerHTML = html;
+        suggestionsDiv.style.display = 'block';
+      }
+    }
+
+    // 页面加载时更新状态
+    window.addEventListener('load', () => {
+      log('=== Android 通知诊断工具已加载 ===');
+      updateStatus();
+      log('点击"运行完整测试"开始诊断');
+    });
+  </script>
+</body>
+</html>
